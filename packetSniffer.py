@@ -37,10 +37,9 @@ try:
                 src_port = packet[UDP].sport
                 dst_port = packet[UDP].dport
                 protocol = "UDP"
-            else:
-                print("This packet has no TCP or UDP port")
-    
             print(f"Source Port {src_port} destination Port {dst_port} Protocol {protocol}")
+        else:
+            print("This packet has no TCP or UDP port")   
         
         # print(packet.summary())
 
