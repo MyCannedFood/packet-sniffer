@@ -84,14 +84,22 @@ with open('log.csv', mode='w', newline='') as file:
                 protocol_counter[protocol] += 1
            
             if datetime.now() - last_summary > timedelta(seconds=30):
+                print("=== Traffic Summary ===")
+                
                 for src_ip in ip_counter:
                     print(src_ip, ip_counter[src_ip])
+
+                print("=======================")
+                
                 for protocol in protocol_counter:
                     print(protocol, protocol_counter[protocol])
 
                 ip_counter.clear()
                 protocol_counter.clear()
                 last_summary = datetime.now()
+               
+                print("=======================")
+
             # print(packet.summary())
     
     except KeyboardInterrupt:
