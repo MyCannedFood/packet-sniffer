@@ -11,7 +11,6 @@ interface = "wlp3s0f4u1"
 sniffer_socket.bind((interface, 0))
 
 scan_tracker = defaultdict(list) 
-scan_tracked = defaultdict(set)
 
 ip_counter = defaultdict(int)
 port_counter = defaultdict(int)
@@ -24,6 +23,8 @@ init_data = ["timestamp",
              "Protocol", 
              "src_port", 
              "dst_port"] 
+
+suspicious_ports = {4444, 1337, 31337, 9001, 6667}
 
 with open('log.csv', mode='w', newline='') as file:
     writer = csv.writer(file)
@@ -75,7 +76,10 @@ with open('log.csv', mode='w', newline='') as file:
                     recent_ports.add(port)
 
                     if len(recent_ports) > 9:
-                        print("alert!" + src_ip)
+                       print("alert!" + src_ip)
+
+                    if port in suspicious_ports:
+                        print("suspicious port" + str(port) + " form " + src_ip)
 
             if src_ip:
                 ip_counter[src_ip] += 1 
