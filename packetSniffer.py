@@ -1,106 +1,118 @@
 import socket
 import csv
+import argparse
 from datetime import datetime, timedelta
-from scapy.all import *
 from scapy.layers.l2 import Ether
+from scapy.layers.inet import IP, TCP, UDP
+from scapy.layers.inet6 import IPv6
 from collections import defaultdict
-
-sniffer_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-
-interface = "wlp3s0f4u1"
-sniffer_socket.bind((interface, 0))
-
-scan_tracker = defaultdict(list) 
-
-ip_counter = defaultdict(int)
-port_counter = defaultdict(int)
-protocol_counter = defaultdict(int)
-last_summary = datetime.now()
-
-init_data = ["timestamp", 
-             "src_IP", 
-             "dst_IP", 
-             "Protocol", 
-             "src_port", 
-             "dst_port"] 
 
 suspicious_ports = {4444, 1337, 31337, 9001, 6667}
 
-with open('log.csv', mode='w', newline='') as file:
-    writer = csv.writer(file)
-    writer.writerow(init_data)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Packet sniffer")
+    parser.add_argument("interface", nargs="?", default="wlp3s0f4u1",
+                        help="Network interface to sniff")
+    args = parser.parse_args()
 
-    try:
-        while True:
-            src_ip = ""
-            dst_ip = ""
-    
-            protocol = ""
-            src_port = ""
-            dst_port = ""
-    
-            raw_data, addr = sniffer_socket.recvfrom(65535)
-            packet = Ether(raw_data)
-            
-            if packet.haslayer(TCP) or packet.haslayer(UDP):
-                if packet.haslayer(TCP):
-                    src_port = packet[TCP].sport
-                    dst_port = packet[TCP].dport
-                    protocol = "TCP"
+    sniffer_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
+    sniffer_socket.bind((args.interface, 0))
+
+    scan_tracker = defaultdict(list) 
+
+    ip_counter = defaultdict(int)
+    protocol_counter = defaultdict(int)
+    last_summary = datetime.now()
+
+    init_data = ["timestamp", 
+                 "src_IP", 
+                 "dst_IP", 
+                 "Protocol", 
+                 "src_port", 
+                 "dst_port"] 
+
+    with open('log.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(init_data)
+
+        try:
+            while True:
+                src_ip = ""
+                dst_ip = ""
+        
+                protocol = ""
+                src_port = ""
+                dst_port = ""
+        
+                raw_data, addr = sniffer_socket.recvfrom(65535)
+                packet = Ether(raw_data)
                 
-                elif packet.haslayer(UDP):
-                    src_port = packet[UDP].sport
-                    dst_port = packet[UDP].dport
-                    protocol = "UDP"
-   
-                if packet.haslayer(IP):
-                    src_ip = packet[IP].src
-                    dst_ip = packet[IP].dst
-    
-                    scan_tracker[src_ip].append((dst_port, datetime.now()))
-                    ip_counter[src_ip] += 1
-                    port_counter[dst_port] += 1
-            
-            now = datetime.now()
+                if packet.haslayer(TCP) or packet.haslayer(UDP):
+                    if packet.haslayer(TCP):
+                        src_port = packet[TCP].sport
+                        dst_port = packet[TCP].dport
+                        protocol = "TCP"
+                    
+                    elif packet.haslayer(UDP):
+                        src_port = packet[UDP].sport
+                        dst_port = packet[UDP].dport
+                        protocol = "UDP"
+        
+                    if packet.haslayer(IP):
+                        src_ip = packet[IP].src
+                        dst_ip = packet[IP].dst
 
-            writer.writerow([now, 
-                             src_ip, 
-                             dst_ip,
-                             protocol,
-                             src_port,
-                             dst_port])
-            scan_tracker[src_ip] = [(p, t) for p, t in scan_tracker[src_ip] if now - t < timedelta(seconds=10)]
+                        scan_tracker[src_ip].append((dst_port, datetime.now()))
+                        ip_counter[src_ip] += 1
 
-            recent_ports = {p for p, _ in scan_tracker[src_ip]}
+                    elif packet.haslayer(IPv6):
+                        src_ip = packet[IPv6].src
+                        dst_ip = packet[IPv6].dst
 
-            if len(recent_ports) > 9:
-                print("alert! " + src_ip)
+                        scan_tracker[src_ip].append((dst_port, datetime.now()))
+                        ip_counter[src_ip] += 1
 
-            for port in recent_ports:
-                if port in suspicious_ports:
-                    print("suspicious port " + str(port) + " from " + src_ip)
+                now = datetime.now()
 
-            if protocol:
-                protocol_counter[protocol] += 1
-           
-            if datetime.now() - last_summary > timedelta(seconds=30):
-                print("=== Traffic Summary ===")
-                
-                for src_ip in ip_counter:
-                    print(src_ip, ip_counter[src_ip])
+                if src_ip and protocol:
+                    writer.writerow([now, 
+                                     src_ip, 
+                                     dst_ip,
+                                     protocol,
+                                     src_port,
+                                     dst_port])
+                scan_tracker[src_ip] = [(p, t) for p, t in scan_tracker[src_ip] if now - t < timedelta(seconds=10)]
 
-                print("=======================")
-                
-                for protocol in protocol_counter:
-                    print(protocol, protocol_counter[protocol])
+                recent_ports = {p for p, _ in scan_tracker[src_ip]}
 
-                ip_counter.clear()
-                protocol_counter.clear()
-                last_summary = datetime.now()
+                if len(recent_ports) > 9:
+                    print("alert! " + src_ip)
+
+                for port in recent_ports:
+                    if port in suspicious_ports:
+                        print("suspicious port " + str(port) + " from " + src_ip)
+
+                if protocol:
+                    protocol_counter[protocol] += 1
                
-                print("=======================")
+                if now - last_summary > timedelta(seconds=30):
+                    print("=== Traffic Summary ===")
+                    
+                    for src_ip in ip_counter:
+                        print(src_ip, ip_counter[src_ip])
 
-            # print(packet.summary())
-    
-    except KeyboardInterrupt:
-            sniffer_socket.close()
+                    print("=======================")
+                    
+                    for protocol in protocol_counter:
+                        print(protocol, protocol_counter[protocol])
+
+                    ip_counter.clear()
+                    protocol_counter.clear()
+                    last_summary = datetime.now()
+                   
+                    print("=======================")
+
+                # print(packet.summary())
+        
+        except KeyboardInterrupt:
+                sniffer_socket.close()
