@@ -61,29 +61,25 @@ with open('log.csv', mode='w', newline='') as file:
                     ip_counter[src_ip] += 1
                     port_counter[dst_port] += 1
             
-            writer.writerow([datetime.now(), 
+            now = datetime.now()
+
+            writer.writerow([now, 
                              src_ip, 
                              dst_ip,
                              protocol,
                              src_port,
                              dst_port])
+            scan_tracker[src_ip] = [(p, t) for p, t in scan_tracker[src_ip] if now - t < timedelta(seconds=10)]
 
-            recent_ports = set()
+            recent_ports = {p for p, _ in scan_tracker[src_ip]}
 
-            for port, time in scan_tracker[src_ip]:
-                
-                if datetime.now() - time < timedelta(seconds=10):
-                    recent_ports.add(port)
+            if len(recent_ports) > 9:
+                print("alert! " + src_ip)
 
-                    if len(recent_ports) > 9:
-                       print("alert!" + src_ip)
+            for port in recent_ports:
+                if port in suspicious_ports:
+                    print("suspicious port " + str(port) + " from " + src_ip)
 
-                    if port in suspicious_ports:
-                        print("suspicious port" + str(port) + " form " + src_ip)
-
-            if src_ip:
-                ip_counter[src_ip] += 1 
-            
             if protocol:
                 protocol_counter[protocol] += 1
            
