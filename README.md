@@ -1,4 +1,4 @@
-# Packet Sniffer
+# packetSniffer
 
 A simple Python-based network packet sniffer that captures and analyzes TCP/UDP traffic on a network interface.
 
