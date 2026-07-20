@@ -1,0 +1,9 @@
+{
+    "interface": "wlp3s0f4u1",
+    "suspicious_ports": [4444, 1337, 31337, 9001, 6667],
+    "scan_threshold": 10,
+    "scan_window_seconds": 10,
+    "log_path": "log.csv",
+    "summary_interval_seconds": 30,
+    "max_queue": 10000
+}

@@ -1,3 +1,5 @@
+import json
+import os
 import socket
 import csv
 import argparse
@@ -8,6 +10,17 @@ from collections import defaultdict
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
+
+
+def load_config(path=None):
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), "sniffer.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"warning: could not load config {path}: {e}")
+        return {}
 
 
 class TrafficLogger:
@@ -82,16 +95,27 @@ class AlertManager:
 
 
 class PacketSniffer:
-    def __init__(self, interface="wlp3s0f4u1", max_queue=10000):
-        self.interface = interface
+    def __init__(self, config=None):
+        config = config or {}
+        self.interface = config.get("interface", "wlp3s0f4u1")
         self.sock = socket.socket(
             socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3)
         )
         self.sock.bind((self.interface, 0))
-        self.logger = TrafficLogger()
-        self.scan_detector = PortScanDetector()
-        self.alert_manager = AlertManager()
-        self.packet_queue = queue.Queue(maxsize=max_queue)
+        self.logger = TrafficLogger(
+            log_path=config.get("log_path", "log.csv"),
+            summary_interval=config.get("summary_interval_seconds", 30),
+        )
+        self.scan_detector = PortScanDetector(
+            threshold=config.get("scan_threshold", 10),
+            window_seconds=config.get("scan_window_seconds", 10),
+        )
+        self.alert_manager = AlertManager(
+            suspicious_ports=set(config.get("suspicious_ports", [4444, 1337, 31337, 9001, 6667])),
+        )
+        self.packet_queue = queue.Queue(
+            maxsize=config.get("max_queue", 10000)
+        )
         self.running = False
 
     def _parse_packet(self, raw_data):
@@ -171,9 +195,19 @@ class PacketSniffer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Packet sniffer")
     parser.add_argument(
-        "interface", nargs="?", default="wlp3s0f4u1",
-        help="Network interface to sniff",
+        "interface", nargs="?",
+        help="Network interface to sniff (overrides config)",
+    )
+    parser.add_argument(
+        "--config", default=None,
+        help="Path to config file (default: sniffer.json)",
     )
     args = parser.parse_args()
-    sniffer = PacketSniffer(interface=args.interface)
+    config = load_config(args.config)
+
+    if args.interface:
+        config["interface"] = args.interface
+    config.setdefault("interface", "wlp3s0f4u1")
+
+    sniffer = PacketSniffer(config)
     sniffer.run()
