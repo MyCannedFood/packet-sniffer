@@ -7,12 +7,19 @@ import threading
 import queue
 import logging
 import sys
+import itertools
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from collections import defaultdict
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
+
+
+class _ClearLineHandler(logging.StreamHandler):
+    def emit(self, record):
+        sys.stderr.write("\r\033[K")
+        super().emit(record)
 
 
 def load_config(path=None):
@@ -36,7 +43,7 @@ def setup_logging(config=None):
     root.handlers.clear()
 
     if log_cfg.get("console", True):
-        handler = logging.StreamHandler()
+        handler = _ClearLineHandler()
         handler.setFormatter(logging.Formatter("%(message)s"))
         root.addHandler(handler)
 
@@ -165,6 +172,9 @@ class PacketSniffer:
             maxsize=config.get("max_queue", 10000)
         )
         self.running = False
+        self.packet_count = 0
+        self.start_time = datetime.now()
+        self._spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
     def _parse_packet(self, raw_data):
         packet = Ether(raw_data)
@@ -205,6 +215,13 @@ class PacketSniffer:
             except queue.Full:
                 pass
 
+    def _show_status(self):
+        elapsed = max((datetime.now() - self.start_time).seconds, 1)
+        rate = self.packet_count // elapsed
+        spin = next(self._spinner)
+        sys.stderr.write(f"\r{spin} {self.packet_count} packets | {rate} pkt/s")
+        sys.stderr.flush()
+
     def _process_loop(self):
         while self.running:
             try:
@@ -225,6 +242,8 @@ class PacketSniffer:
             for alert in self.alert_manager.check_ports(src_ip, recent_ports):
                 self.log.warning("%s", alert)
 
+            self.packet_count += 1
+            self._show_status()
             self.logger.try_summary(now)
 
     def run(self):
