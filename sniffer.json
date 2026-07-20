@@ -5,5 +5,13 @@
     "scan_window_seconds": 10,
     "log_path": "log.csv",
     "summary_interval_seconds": 30,
-    "max_queue": 10000
+    "max_queue": 10000,
+    "logging": {
+        "level": "INFO",
+        "console": true,
+        "file": "sniffer.log",
+        "max_bytes": 10485760,
+        "backup_count": 5,
+        "json_format": false
+    }
 }

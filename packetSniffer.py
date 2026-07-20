@@ -5,6 +5,9 @@ import csv
 import argparse
 import threading
 import queue
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from collections import defaultdict
 from scapy.layers.l2 import Ether
@@ -19,12 +22,47 @@ def load_config(path=None):
         with open(path) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"warning: could not load config {path}: {e}")
+        print(f"warning: could not load config {path}: {e}", file=sys.stderr)
         return {}
+
+
+def setup_logging(config=None):
+    config = config or {}
+    log_cfg = config.get("logging", {})
+
+    level = getattr(logging, log_cfg.get("level", "INFO").upper(), logging.INFO)
+    root = logging.getLogger("sniffer")
+    root.setLevel(level)
+    root.handlers.clear()
+
+    if log_cfg.get("console", True):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        root.addHandler(handler)
+
+    log_file = log_cfg.get("file")
+    if log_file:
+        max_bytes = log_cfg.get("max_bytes", 10 * 1024 * 1024)
+        backup_count = log_cfg.get("backup_count", 5)
+        if log_cfg.get("json_format", False):
+            fmt = logging.Formatter(
+                '{"time":"%(asctime)s","level":"%(levelname)s",'
+                '"logger":"%(name)s","message":"%(message)s"}'
+            )
+        else:
+            fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        handler = RotatingFileHandler(
+            log_file, maxBytes=max_bytes, backupCount=backup_count
+        )
+        handler.setFormatter(fmt)
+        root.addHandler(handler)
+
+    return root
 
 
 class TrafficLogger:
     def __init__(self, log_path="log.csv", summary_interval=30):
+        self.log = logging.getLogger("sniffer.TrafficLogger")
         self.log_path = log_path
         self.summary_interval = timedelta(seconds=summary_interval)
         self.ip_counter = defaultdict(int)
@@ -36,7 +74,7 @@ class TrafficLogger:
             ["timestamp", "src_IP", "dst_IP", "Protocol", "src_port", "dst_port"]
         )
 
-    def log(self, timestamp, src_ip, dst_ip, protocol, src_port, dst_port):
+    def log_packet(self, timestamp, src_ip, dst_ip, protocol, src_port, dst_port):
         self.writer.writerow([timestamp, src_ip, dst_ip, protocol, src_port, dst_port])
         self.ip_counter[src_ip] += 1
         self.protocol_counter[protocol] += 1
@@ -44,16 +82,16 @@ class TrafficLogger:
     def try_summary(self, now):
         if now - self.last_summary < self.summary_interval:
             return
-        print("=== Traffic Summary ===")
+        self.log.info("=== Traffic Summary ===")
         for ip, count in self.ip_counter.items():
-            print(ip, count)
-        print("=======================")
+            self.log.info("%s %d", ip, count)
+        self.log.info("=======================")
         for proto, count in self.protocol_counter.items():
-            print(proto, count)
+            self.log.info("%s %d", proto, count)
         self.ip_counter.clear()
         self.protocol_counter.clear()
         self.last_summary = now
-        print("=======================")
+        self.log.info("=======================")
 
     def close(self):
         self.file.close()
@@ -61,6 +99,7 @@ class TrafficLogger:
 
 class PortScanDetector:
     def __init__(self, threshold=10, window_seconds=10):
+        self.log = logging.getLogger("sniffer.PortScanDetector")
         self.threshold = threshold
         self.window = timedelta(seconds=window_seconds)
         self.scan_tracker = defaultdict(list)
@@ -82,6 +121,7 @@ class PortScanDetector:
 
 class AlertManager:
     def __init__(self, suspicious_ports=None):
+        self.log = logging.getLogger("sniffer.AlertManager")
         self.suspicious_ports = (
             suspicious_ports or {4444, 1337, 31337, 9001, 6667}
         )
@@ -96,6 +136,7 @@ class AlertManager:
 
 class PacketSniffer:
     def __init__(self, config=None):
+        self.log = logging.getLogger("sniffer.PacketSniffer")
         config = config or {}
         self.interface = config.get("interface", "wlp3s0f4u1")
         self.sock = socket.socket(
@@ -111,7 +152,9 @@ class PacketSniffer:
             window_seconds=config.get("scan_window_seconds", 10),
         )
         self.alert_manager = AlertManager(
-            suspicious_ports=set(config.get("suspicious_ports", [4444, 1337, 31337, 9001, 6667])),
+            suspicious_ports=set(
+                config.get("suspicious_ports", [4444, 1337, 31337, 9001, 6667])
+            ),
         )
         self.packet_queue = queue.Queue(
             maxsize=config.get("max_queue", 10000)
@@ -165,15 +208,17 @@ class PacketSniffer:
                 continue
             src_ip, dst_ip, protocol, src_port, dst_port = parsed
 
-            self.logger.log(now, src_ip, dst_ip, protocol, src_port, dst_port)
+            self.logger.log_packet(
+                now, src_ip, dst_ip, protocol, src_port, dst_port
+            )
             self.scan_detector.record(src_ip, dst_port, now)
 
             is_scan, recent_ports = self.scan_detector.is_scan(src_ip, now)
             if is_scan:
-                print("alert! " + src_ip)
+                self.log.warning("alert! %s", src_ip)
 
             for alert in self.alert_manager.check_ports(src_ip, recent_ports):
-                print(alert)
+                self.log.warning("%s", alert)
 
             self.logger.try_summary(now)
 
@@ -204,6 +249,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     config = load_config(args.config)
+    setup_logging(config)
 
     if args.interface:
         config["interface"] = args.interface
