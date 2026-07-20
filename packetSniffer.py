@@ -83,15 +83,20 @@ class TrafficLogger:
         if now - self.last_summary < self.summary_interval:
             return
         self.log.info("=== Traffic Summary ===")
-        for ip, count in self.ip_counter.items():
-            self.log.info("%s %d", ip, count)
-        self.log.info("=======================")
-        for proto, count in self.protocol_counter.items():
-            self.log.info("%s %d", proto, count)
+        self.log.info("%-45s %s", "Source IP", "Packets")
+        self.log.info("-" * 52)
+
+        for ip, count in sorted(
+            self.ip_counter.items(), key=lambda x: x[1], reverse=True
+        ):
+            self.log.info("%-45s %d", ip, count)
+        self.log.info("")
+        for proto, count in sorted(self.protocol_counter.items()):
+            self.log.info("%-45s %d", proto, count)
         self.ip_counter.clear()
         self.protocol_counter.clear()
         self.last_summary = now
-        self.log.info("=======================")
+        self.log.info("---")
 
     def close(self):
         self.file.close()
