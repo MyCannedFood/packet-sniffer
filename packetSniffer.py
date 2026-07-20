@@ -37,52 +37,42 @@ if __name__ == "__main__":
 
         try:
             while True:
-                src_ip = ""
-                dst_ip = ""
-        
-                protocol = ""
-                src_port = ""
-                dst_port = ""
-        
                 raw_data, addr = sniffer_socket.recvfrom(65535)
                 packet = Ether(raw_data)
-                
-                if packet.haslayer(TCP) or packet.haslayer(UDP):
-                    if packet.haslayer(TCP):
-                        src_port = packet[TCP].sport
-                        dst_port = packet[TCP].dport
-                        protocol = "TCP"
-                    
-                    elif packet.haslayer(UDP):
-                        src_port = packet[UDP].sport
-                        dst_port = packet[UDP].dport
-                        protocol = "UDP"
-        
-                    if packet.haslayer(IP):
-                        src_ip = packet[IP].src
-                        dst_ip = packet[IP].dst
 
-                        scan_tracker[src_ip].append((dst_port, datetime.now()))
-                        ip_counter[src_ip] += 1
+                if not (packet.haslayer(TCP) or packet.haslayer(UDP)):
+                    continue
 
-                    elif packet.haslayer(IPv6):
-                        src_ip = packet[IPv6].src
-                        dst_ip = packet[IPv6].dst
+                if packet.haslayer(TCP):
+                    src_port = packet[TCP].sport
+                    dst_port = packet[TCP].dport
+                    protocol = "TCP"
+                else:
+                    src_port = packet[UDP].sport
+                    dst_port = packet[UDP].dport
+                    protocol = "UDP"
 
-                        scan_tracker[src_ip].append((dst_port, datetime.now()))
-                        ip_counter[src_ip] += 1
+                if packet.haslayer(IP):
+                    src_ip = packet[IP].src
+                    dst_ip = packet[IP].dst
+                elif packet.haslayer(IPv6):
+                    src_ip = packet[IPv6].src
+                    dst_ip = packet[IPv6].dst
+                else:
+                    continue
 
                 now = datetime.now()
 
-                if src_ip and protocol:
-                    writer.writerow([now, 
-                                     src_ip, 
-                                     dst_ip,
-                                     protocol,
-                                     src_port,
-                                     dst_port])
-                scan_tracker[src_ip] = [(p, t) for p, t in scan_tracker[src_ip] if now - t < timedelta(seconds=10)]
+                writer.writerow([now, src_ip, dst_ip, protocol, src_port, dst_port])
 
+                scan_tracker[src_ip].append((dst_port, now))
+                ip_counter[src_ip] += 1
+                protocol_counter[protocol] += 1
+
+                scan_tracker[src_ip] = [
+                    (p, t) for p, t in scan_tracker[src_ip]
+                    if now - t < timedelta(seconds=10)
+                ]
                 recent_ports = {p for p, _ in scan_tracker[src_ip]}
 
                 if len(recent_ports) > 9:
@@ -92,27 +82,22 @@ if __name__ == "__main__":
                     if port in suspicious_ports:
                         print("suspicious port " + str(port) + " from " + src_ip)
 
-                if protocol:
-                    protocol_counter[protocol] += 1
-               
                 if now - last_summary > timedelta(seconds=30):
                     print("=== Traffic Summary ===")
-                    
-                    for src_ip in ip_counter:
-                        print(src_ip, ip_counter[src_ip])
+
+                    for ip, count in ip_counter.items():
+                        print(ip, count)
 
                     print("=======================")
-                    
-                    for protocol in protocol_counter:
-                        print(protocol, protocol_counter[protocol])
+
+                    for proto, count in protocol_counter.items():
+                        print(proto, count)
 
                     ip_counter.clear()
                     protocol_counter.clear()
                     last_summary = datetime.now()
-                   
+
                     print("=======================")
 
-                # print(packet.summary())
-        
         except KeyboardInterrupt:
                 sniffer_socket.close()
