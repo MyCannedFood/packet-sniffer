@@ -1,6 +1,8 @@
 import socket
 import csv
 import argparse
+import threading
+import queue
 from datetime import datetime, timedelta
 from collections import defaultdict
 from scapy.layers.l2 import Ether
@@ -80,7 +82,7 @@ class AlertManager:
 
 
 class PacketSniffer:
-    def __init__(self, interface="wlp3s0f4u1"):
+    def __init__(self, interface="wlp3s0f4u1", max_queue=10000):
         self.interface = interface
         self.sock = socket.socket(
             socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3)
@@ -89,6 +91,8 @@ class PacketSniffer:
         self.logger = TrafficLogger()
         self.scan_detector = PortScanDetector()
         self.alert_manager = AlertManager()
+        self.packet_queue = queue.Queue(maxsize=max_queue)
+        self.running = False
 
     def _parse_packet(self, raw_data):
         packet = Ether(raw_data)
@@ -115,33 +119,51 @@ class PacketSniffer:
 
         return src_ip, dst_ip, protocol, src_port, dst_port
 
-    def run(self):
-        try:
-            while True:
+    def _capture_loop(self):
+        while self.running:
+            try:
                 raw_data, _ = self.sock.recvfrom(65535)
-                parsed = self._parse_packet(raw_data)
-                if parsed is None:
-                    continue
+            except OSError:
+                break
+            parsed = self._parse_packet(raw_data)
+            if parsed is None:
+                continue
+            try:
+                self.packet_queue.put((datetime.now(), parsed), timeout=1)
+            except queue.Full:
+                pass
 
-                src_ip, dst_ip, protocol, src_port, dst_port = parsed
-                now = datetime.now()
+    def _process_loop(self):
+        while self.running:
+            try:
+                now, parsed = self.packet_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            src_ip, dst_ip, protocol, src_port, dst_port = parsed
 
-                self.logger.log(now, src_ip, dst_ip, protocol, src_port, dst_port)
-                self.scan_detector.record(src_ip, dst_port, now)
+            self.logger.log(now, src_ip, dst_ip, protocol, src_port, dst_port)
+            self.scan_detector.record(src_ip, dst_port, now)
 
-                is_scan, recent_ports = self.scan_detector.is_scan(src_ip, now)
-                if is_scan:
-                    print("alert! " + src_ip)
+            is_scan, recent_ports = self.scan_detector.is_scan(src_ip, now)
+            if is_scan:
+                print("alert! " + src_ip)
 
-                for alert in self.alert_manager.check_ports(src_ip, recent_ports):
-                    print(alert)
+            for alert in self.alert_manager.check_ports(src_ip, recent_ports):
+                print(alert)
 
-                self.logger.try_summary(now)
+            self.logger.try_summary(now)
 
+    def run(self):
+        self.running = True
+        capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        capture_thread.start()
+        try:
+            self._process_loop()
         except KeyboardInterrupt:
             self.close()
 
     def close(self):
+        self.running = False
         self.sock.close()
         self.logger.close()
 
