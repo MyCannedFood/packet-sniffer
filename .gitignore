@@ -1,2 +1,8 @@
 notes.txt
 log.csv
+sniffer.log
+.envrc
+.direnv/
+__pycache__/
+*.pyc
+.pytest_cache/
